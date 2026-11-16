@@ -1,0 +1,94 @@
+|| Easy OBPL operation: Tap the Tomato ||
+|| Save as operation.obpl next to index.html ||
+
+operation funct startGame()
+    score = 0
+    timeLeft = 1200
+    tomatoX = 200
+    tomatoY = 150
+    tomatoR = 20
+    velX = 2
+    velY = 1.5
+    gameOver = 0
+EndGame
+
+operation funct startOperation()
+    clearCanvas()
+
+    if gameOver # 1
+        functPrint("GAME OVER", 140, 130, 24)
+        functPrint("Score: " .. score, 160, 165, 18)
+        functPrint("Tap to restart", 135, 200, 14)
+        EOARL
+    EndGame
+
+    timeLeft = timeLeft - 1
+
+    if timeLeft <= 0
+        gameOver = 1
+    EndGame
+
+    tomatoX = tomatoX + velX
+    tomatoY = tomatoY + velY
+
+    if tomatoX < tomatoR
+        tomatoX = tomatoR
+        velX = 0 - velX
+    EndGame
+
+    if tomatoX > 400 - tomatoR
+        tomatoX = 400 - tomatoR
+        velX = 0 - velX
+    EndGame
+
+    if tomatoY < tomatoR + 20
+        tomatoY = tomatoR + 20
+        velY = 0 - velY
+    EndGame
+
+    if tomatoY > 300 - tomatoR
+        tomatoY = 300 - tomatoR
+        velY = 0 - velY
+    EndGame
+
+    createGEOMETRY("circle", tomatoX, tomatoY, tomatoR, 0, "#ff4757")
+    createGEOMETRY("rect", tomatoX - 6, tomatoY - tomatoR - 8, 12, 8, "#2ed573")
+
+    functPrint("Score: " .. score, 10, 22, 14)
+    functPrint("Time: " .. Math.ceil(timeLeft / 60), 320, 22, 14)
+
+    createGEOMETRY("rect", 10, 30, 380, 6, "#333")
+    createGEOMETRY("rect", 10, 30, 380 * timeLeft / 1200, 6, "#2ed573")
+EndGame
+
+operation funct clicked(L, H)
+    if gameOver # 1
+        startGame()
+        EOARL
+    EndGame
+
+    dx = L - tomatoX
+    dy = H - tomatoY
+
+    if dx * dx + dy * dy < (tomatoR + 10) * (tomatoR + 10)
+        score = score + 1
+        tomatoX = 30 + Math.random() * 340
+        tomatoY = 60 + Math.random() * 210
+
+        velX = velX * 1.03
+        velY = velY * 1.03
+
+        if velX > 7
+            velX = 7
+        EndGame
+        if velX < -7
+            velX = -7
+        EndGame
+        if velY > 7
+            velY = 7
+        EndGame
+        if velY < -7
+            velY = -7
+        EndGame
+    EndGame
+EndGame
