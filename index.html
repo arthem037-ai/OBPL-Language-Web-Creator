@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>🍅 OBPL Game</title>
+<style>
+    html, body { height: 100%; }
+    body {
+        margin: 0; padding: 0;
+        background: #000;
+        color: #0f0;
+        font-family: monospace;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        overflow: hidden;
+    }
+    canvas {
+        display: block;
+        width: 400px;
+        max-width: 100%;
+        height: auto;
+        background: #111;
+        touch-action: none;
+        box-shadow: 0 0 20px rgba(255, 71, 87, 0.2);
+        border: 1px solid #333;
+    }
+    #status {
+        position: absolute;
+        top: 10px; left: 10px; right: 10px;
+        font-size: 13px;
+        line-height: 1.4;
+        color: #ff4757;
+        text-align: center;
+        white-space: pre-wrap;
+        z-index: 10;
+    }
+    #file-input {
+        display: none;
+        position: absolute;
+        top: 50%; left: 50%;
+        transform: translate(-50%, -50%);
+        color: #ff4757;
+        font-family: monospace;
+        z-index: 10;
+    }
+</style>
+</head>
+<body>
+
+<div id="status">Loading OBPL...</div>
+<canvas id="game-screen" width="400" height="300"></canvas>
+<input id="file-input" type="file" accept=".obpl,.txt,text/plain">
+
+<script>
+    // ==========================================
+    // CANVAS: logical resolution 400x300 + DPR
+    // ==========================================
+    const LOGIC_W = 400;
+    const LOGIC_H = 300;
+
+    const canvas    = document.getElementById('game-screen');
+    const statusEl  = document.getElementById('status');
+    const fileInput = document.getElementById('file-input');
+
+    (function initCanvas() {
+        const dpr = Math.min(window.devicePixelRatio || 1, 3);
+        canvas.width  = Math.round(LOGIC_W * dpr);
+        canvas.height = Math.round(LOGIC_H * dpr);
+        const ctx = canvas.getContext('2d');
+        // All drawing after this uses 400x300 coordinates
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    })();
+
+    function setStatus(text) {
+        if (text == null) {
+            statusEl.style.display = 'none';
+            return;
+        }
+        statusEl.textContent = text;
+        statusEl.style.display = 'block';
+    }
+
+    // ==========================================
+    // ENGINE BUILT-IN FUNCTIONS
+    // ==========================================
+    window.clearCanvas = function () {
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#000';
+        ctx.fillRect(0, 0, LOGIC_W, LOGIC_H);
+    };
+
+    window.createGEOMETRY = function (type, L, H, size, height, color) {
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = color || '#fff';
+        if (type === 'rect') {
+            ctx.fillRect(L, H, size, height);
+        } else if (type === 'circle') {
+            ctx.beginPath();
+            ctx.arc(L, H, size, 0, 2 * Math.PI);
+            ctx.fill();
+        }
+    };
+
+    window.functPrint = function (text, L, H, size) {
+        const ctx = canvas.getContext('2d');
+        ctx.font = (size || 20) + 'px monospace';
+        ctx.fillStyle = '#fff';
+        ctx.fillText(String(text), L, H);
+    };
+
+    window.FO = function (fn) { return fn; };
+
+    // ==========================================
+    // OBPL COMPILER
+    // ==========================================
+    const OBPL = {
+        vars: {},
+        loopToken: 0,
+
+        // "a" .. "b" -> "a" + "b", without touching string contents.
+        // No lookbehind (older Safari crashes on it during script parsing).
+        concat: function (line) {
+            let out = '';
+            let quote = null;
+            for (let i = 0; i < line.length; i++) {
+                const ch = line[i];
+                if (quote) {
+                    out += ch;
+                    if (ch === '\\') { out += line[++i] || ''; continue; }
+                    if (ch === quote) quote = null;
+                    continue;
+                }
+                if (ch === '"' || ch === "'" || ch === '`') { quote = ch; out += ch; continue; }
+                if (ch === '.' && line[i + 1] === '.' && line[i + 2] !== '.') {
+                    out += ' + ';
+                    i++;
+                    continue;
+                }
+                out += ch;
+            }
+            return out;
+        },
+
+        compile: function (src) {
+            // || comments ||
+            const code  = String(src).replace(/\|\|[\s\S]*?\|\|/g, '');
+            const out   = [];
+            const lines = code.split(/\r?\n/);
+
+            for (let i = 0; i < lines.length; i++) {
+                let line = lines[i].trim();
+                if (!line) continue;
+
+                line = OBPL.concat(line);
+
+                // Function declarations
+                line = line.replace(
+                    /^Ll\s+([A-Za-z_$][\w$]*)\s*\(([^)]*)\)$/,
+                    'OBPL.vars.$1 = function ($2) {'
+                );
+                line = line.replace(
+                    /^operation\s+funct\s+([A-Za-z_$][\w$]*)\s*\(([^)]*)\)$/,
+                    'OBPL.vars.$1 = function ($2) {'
+                );
+
+                line = line.replace(/\bEOARL\b/g, 'return;');
+                line = line.replace(/\bEndGame\b/g, '}');
+
+                // Control structures (else if before if)
+                line = line.replace(/^else\s+if\s+(.*)$/, '} else if ($1) {');
+                line = line.replace(/^if\s+(.*)$/,       'if ($1) {');
+                line = line.replace(/^while\s+(.*)$/,    'while ($1) {');
+                line = line.replace(/^else$/,            '} else {');
+
+                // Comparison
+                line = line.replace(/\s+#\s+/g, ' == ');
+
+                // Auto semicolon
+                if (!/[{};,(\[+]$/.test(line)) line += ';';
+
+                out.push(line);
+            }
+            return out.join('\n');
+        },
+
+        run: function (source) {
+            this.loopToken++;
+            const token = this.loopToken;
+
+            // Own print so we don't override window.print (otherwise Ctrl+P breaks).
+            if (!('print' in this.vars)) {
+                this.vars.print = function (text) { console.log(text); };
+            }
+
+            let js;
+            try {
+                js = this.compile(source);
+            } catch (e) {
+                setStatus('🍅 Compilation error: ' + e.message);
+                return;
+            }
+
+            try {
+                const func = new Function('OBPL', 'with (OBPL.vars) {\n' + js + '\n}');
+                func(this);
+            } catch (e) {
+                console.error('OBPL runtime error\n--- compiled ---\n' + js + '\n---------------', e);
+                setStatus('🍅 OBPL error: ' + e.message);
+                return;
+            }
+
+            setStatus(null);
+
+            try {
+                if (typeof this.vars.startGame === 'function') this.vars.startGame();
+            } catch (e) {
+                console.error(e);
+                setStatus('🍅 Error in startGame: ' + e.message);
+                return;
+            }
+
+            if (typeof this.vars.startOperation === 'function') {
+                const loop = () => {
+                    if (this.loopToken !== token) return; // game was restarted
+                    try {
+                        this.vars.startOperation();
+                    } catch (e) {
+                        console.error(e);
+                        this.loopToken++;                 // stop the loop
+                        setStatus('🍅 Error in startOperation: ' + e.message);
+                        return;
+                    }
+                    requestAnimationFrame(loop);
+                };
+                requestAnimationFrame(loop);
+            }
+        }
+    };
+
+    // ==========================================
+    // CLICKS / TOUCHES
+    // ==========================================
+    function handlePointer(clientX, clientY) {
+        const rect = canvas.getBoundingClientRect();
+        if (!rect.width || !rect.height) return;
+
+        const L = Math.round((clientX - rect.left) * LOGIC_W / rect.width);
+        const H = Math.round((clientY - rect.top)  * LOGIC_H / rect.height);
+
+        if (typeof OBPL.vars.clicked === 'function') {
+            try { OBPL.vars.clicked(L, H); } catch (e) { console.error(e); }
+        }
+    }
+
+    if (window.PointerEvent) {
+        canvas.addEventListener('pointerdown', function (e) {
+            e.preventDefault();
+            handlePointer(e.clientX, e.clientY);
+        });
+    } else {
+        canvas.addEventListener('mousedown', function (e) {
+            handlePointer(e.clientX, e.clientY);
+        });
+        canvas.addEventListener('touchstart', function (e) {
+            e.preventDefault();
+            const t = e.changedTouches[0];
+            if (t) handlePointer(t.clientX, t.clientY);
+        }, { passive: false });
+    }
+
+    // ==========================================
+    // LOAD operation.obpl
+    // ==========================================
+    function startWithSource(text) {
+        OBPL.vars = {};
+        OBPL.run(text);
+    }
+
+    function offerFilePicker() {
+        setStatus('🍅 Could not load operation.obpl.\n' +
+                  'The page was probably opened via file:// — fetch is blocked there.\n' +
+                  'Choose the file manually:');
+        fileInput.style.display = 'block';
+    }
+
+    function loadFromServer() {
+        const candidates = ['operation.obpl', 'operation.txt'];
+        let i = 0;
+
+        (function next() {
+            if (i >= candidates.length) { offerFilePicker(); return; }
+            const url = candidates[i++];
+
+            fetch(url, { cache: 'no-store' })
+                .then(function (r) {
+                    if (!r.ok) throw new Error(r.status + ' ' + r.statusText);
+                    return r.text();
+                })
+                .then(startWithSource)
+                .catch(next);
+        })();
+    }
+
+    fileInput.addEventListener('change', function () {
+        const file = fileInput.files && fileInput.files[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = function () {
+            fileInput.style.display = 'none';
+            startWithSource(String(reader.result));
+        };
+        reader.onerror = function () {
+            setStatus('🍅 Failed to read the file');
+        };
+        reader.readAsText(file);
+    });
+
+    window.addEventListener('load', loadFromServer);
+</script>
+</body>
+</html>
